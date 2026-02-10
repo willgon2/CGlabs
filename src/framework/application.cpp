@@ -211,7 +211,7 @@ void Application::Render(void)
         }
     }
 
-    // 3) Toolbar abajo (recuerda: y=0 está ABAJO en tu framebuffer)
+    /*// 3) Toolbar abajo (recuerda: y=0 está ABAJO en tu framebuffer)
     int w = (int)framebuffer.width;
 
     // Fondo gris en y = 0..TOOLBAR_H-1
@@ -273,6 +273,7 @@ void Application::Render(void)
         framebuffer.DrawRect((int)btnBlue.position.x, (int)btnBlue.position.y, btnBlue.width, btnBlue.height, Color::YELLOW, 2, false, Color::BLACK);
     else if (current_color.r == Color::YELLOW.r && current_color.g == Color::YELLOW.g && current_color.b == Color::YELLOW.b)
         framebuffer.DrawRect((int)btnYellow.position.x, (int)btnYellow.position.y, btnYellow.width, btnYellow.height, Color::YELLOW, 2, false, Color::BLACK);
+*/
 
     // 4) Presentar
     framebuffer.Render();
