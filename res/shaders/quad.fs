@@ -47,15 +47,15 @@ void main()
 
 	vec3 color_c = vec3(gy, 0.0, gx); // intersections go magenta (R+B)
 
-	// d) 2D UV colour gradient — the simplest possible 2D gradient
-	//    R = uv.x  (0=left → 1=right)
-	//    G = uv.y  (0=bottom → 1=top)
-	//    B = 0     (no blue)
-	//    Corners: bottom-left=black(0,0,0), bottom-right=red(1,0,0),
-	//             top-left=green(0,1,0), top-right=yellow(1,1,0).
-	//    The 4-corner mix approach introduced irregular blending;
-	//    directly mapping R=x, G=y gives perfectly uniform square-ish regions.
-	vec3 color_d = vec3(uv.x, uv.y, 0.0);
+	// d) 2D UV colour gradient
+	//    R = uv.x            (0=left, 1=right)
+	//    G = 0.5 + 0.5*uv.y  (0.5=bottom, 1.0=top) — never reaches 0
+	//    B = 0
+	//    Corners: BL=(0,0.5,0)=dark-green, BR=(1,0.5,0)=orange,
+	//             TL=(0,1.0,0)=green,       TR=(1,1.0,0)=yellow.
+	//    The minimum green of 0.5 ensures the bottom of the image stays
+	//    colourful (dark green / orange) instead of going black.
+	vec3 color_d = vec3(uv.x, 0.5 + 0.5 * uv.y, 0.0);
 
 	// e) Black and white checkerboard
 	//    floor(uv*N) gives integer cell index; sum of indices mod 2 alternates 0/1.
@@ -73,7 +73,9 @@ void main()
 	const float PI = 3.14159265;
 	float wave_y = 0.5 + 0.35 * sin(uv.x * 4.0 * PI);
 	float glow   = exp(-abs(uv.y - wave_y) * 6.0);
-	vec3 color_f = vec3(glow * glow * 0.4, glow, 0.0);
+	// 0.1 ambient green: background is dark green (not black) matching reference.
+	// 0.9*glow: wave adds up to 90% green → peak reaches (0.4, 1.0, 0) yellow-green.
+	vec3 color_f = vec3(glow * glow * 0.4, 0.1 + 0.9 * glow, 0.0);
 
 	// Select subtask (the only allowed conditional: switching between tasks)
 	if (u_subtask == 0)      color = color_a;
