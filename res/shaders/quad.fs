@@ -52,10 +52,13 @@ void main()
 	//    Dividing back by N gives the cell's representative UV value.
 	//    Aspect-correcting x ensures cells are physically square on screen.
 	//    No lines, no borders — just blocky flat colour regions.
-	float N_d = 8.0;
+	float N_d = 10.0;
 	vec2 cell_uv = floor(vec2(uv.x * N_d * u_aspect, uv.y * N_d))
 	             / vec2(N_d * u_aspect, N_d);
-	vec3 color_d = vec3(cell_uv.x, 0.5 + 0.5 * cell_uv.y, 0.0);
+	// R = cell_uv.x  (0=left → 1=right)
+	// G = cell_uv.y  (0=bottom → 1=top, reaches near-0 at bottom row)
+	// Corners: BL≈black, BR≈red, TL≈green, TR≈yellow
+	vec3 color_d = vec3(cell_uv.x, cell_uv.y, 0.0);
 
 	// e) Black and white checkerboard
 	//    floor(uv*N) gives integer cell index; sum of indices mod 2 alternates 0/1.
