@@ -26,6 +26,9 @@ uniform bool u_use_normal_texture;
 uniform sampler2D u_color_texture;
 uniform sampler2D u_normal_texture;
 
+// Model matrix — needed to rotate texture normals from object space to world space
+uniform mat4 u_model;
+
 // Default material coefficients (used when textures are off)
 uniform vec3 u_Ka;
 uniform vec3 u_Kd;
@@ -42,8 +45,9 @@ void main()
 		// Normal map stores values in [0,1]; convert to [-1,1] direction
 		vec3 tex_normal = texture2D(u_normal_texture, v_uv).rgb;
 		tex_normal = tex_normal * 2.0 - 1.0;
-		// Convert from local/object space to world space using model matrix
-		tex_normal = normalize((vec4(tex_normal, 0.0)).xyz); // already world via model
+		// Convert from object space to world space using the model matrix.
+		// Same transform as vertex normals in phong.vs (w=0 ignores translation).
+		tex_normal = normalize((u_model * vec4(tex_normal, 0.0)).xyz);
 		// Blend between vertex normal and texture normal for smoother result
 		N = normalize(mix(N, tex_normal, 0.7));
 	}
