@@ -1,9 +1,11 @@
-﻿#include "application.h"
+#include "application.h"
 #include "mesh.h"
 #include "shader.h"
-#include "utils.h"
+#include "texture.h"
 #include "entity.h"
 #include "camera.h"
+#include "material.h"
+#include "utils.h"
 #include <algorithm>
 #include <cmath>
 
@@ -20,6 +22,7 @@ Application::Application(const char* caption, int width, int height)
     this->window_height = h;
     this->keystate = SDL_GetKeyboardState(nullptr);
 
+    // We keep the software framebuffer alive (used in old Lab3 mode if needed)
     this->framebuffer.Resize(w, h);
     this->canvas.Resize(w, h);
     this->canvas.Fill(Color::BLACK);
@@ -51,355 +54,369 @@ void Application::UpdateCameraFromOrbit()
     offset.y = orbit_distance * (sp);
     offset.z = orbit_distance * (cy * cp);
 
-    Vector3 eye = target + offset;
-
-    camera->LookAt(eye, target, Vector3(0.0f, 1.0f, 0.0f));
+    camera->LookAt(target + offset, target, Vector3(0.0f, 1.0f, 0.0f));
     UpdateCameraProjection();
 }
 
+// =============================================================
+//  Init
+//  Called ONCE at startup. Load ALL resources here.
+//  NEVER load textures/meshes/shaders inside Render() or Update()
+//  because those run ~60 times per second!
+// =============================================================
 void Application::Init(void)
 {
     std::cout << "Initiating app..." << std::endl;
     framebuffer.Fill(Color::BLACK);
 
+    // ---- Camera ----
+    camera = new Camera();
+    camera->center = Vector3(0.0f, 0.25f, 0.0f);
+    cam_near = 0.1f;
+    cam_far  = 1000.0f;
+    cam_fov  = 45.0f;
+    orbit_distance = 6.0f;
+    orbit_yaw   = 0.0f;
+    orbit_pitch = 0.0f;
+    UpdateCameraFromOrbit();
+
+    // ---- 3D mesh ----
     shared_mesh = new Mesh();
     shared_mesh->LoadOBJ("meshes/lee.obj");
 
-    zBuffer.Resize(window_width, window_height);
-
-    Image* myTexture = new Image();
-    myTexture->LoadTGA("textures/lee_color_specular.tga", true);
-
+    // ---- Entities (animated 3D objects) ----
+    // Three instances of the same mesh, each with different position/speed/phase
     Entity* e0 = new Entity();
-    e0->mesh = shared_mesh;
-    e0->texture = myTexture; 
-    e0->base_position = Vector3(0.0f, 0.0f, 0.0f);
-    e0->rotation_speed = 1.0f;
-    e0->scale_base = 1.0f;
-    e0->scale_amp = 0.15f;
-    e0->phase = 0.0f;
+    e0->mesh            = shared_mesh;
+    e0->base_position   = Vector3(0.0f, 0.0f, 0.0f);
+    e0->rotation_speed  = 1.0f;
+    e0->scale_base      = 1.0f;
+    e0->scale_amp       = 0.15f;
+    e0->phase           = 0.0f;
 
     Entity* e1 = new Entity();
-    e1->mesh = shared_mesh;
-    e1->texture = myTexture;
-    e1->base_position = Vector3(-1.6f, 0.0f, 0.0f);
-    e1->rotation_speed = -1.6f;
-    e1->scale_base = 1.25f;
-    e1->scale_amp = 0.20f;
-    e1->phase = 1.5f;
+    e1->mesh            = shared_mesh;
+    e1->base_position   = Vector3(-1.6f, 0.0f, 0.0f);
+    e1->rotation_speed  = -1.6f;
+    e1->scale_base      = 1.25f;
+    e1->scale_amp       = 0.20f;
+    e1->phase           = 1.5f;
 
     Entity* e2 = new Entity();
-    e2->mesh = shared_mesh;
-    e2->texture = myTexture;
-    e2->base_position = Vector3(1.6f, 0.0f, 0.0f);
-    e2->rotation_speed = 2.2f;
-    e2->scale_base = 0.85f;
-    e2->scale_amp = 0.25f;
-    e2->phase = 3.0f;
+    e2->mesh            = shared_mesh;
+    e2->base_position   = Vector3(1.6f, 0.0f, 0.0f);
+    e2->rotation_speed  = 2.2f;
+    e2->scale_base      = 0.85f;
+    e2->scale_amp       = 0.25f;
+    e2->phase           = 3.0f;
 
-    entities.clear();
     entities.push_back(e0);
     entities.push_back(e1);
     entities.push_back(e2);
 
-    entity_colors.clear();
-    entity_colors.push_back(Color::WHITE);
-    entity_colors.push_back(Color::BLUE);
-    entity_colors.push_back(Color::RED);
+    // ================================================================
+    // LAB 4 - GPU resources
+    // ================================================================
 
-    camera = new Camera();
-    camera->center = Vector3(0.0f, 0.25f, 0.0f);
+    // Task 2.1 - Full-screen quad
+    // CreateQuad() builds a rectangle covering [-1,1]x[-1,1] in clip space
+    // with UV coordinates (0,0)-(1,1)
+    quad_mesh = new Mesh();
+    quad_mesh->CreateQuad();
 
-    cam_near = 0.1f;
-    cam_far = 1000.0f;
-    cam_fov = 45.0f;
+    // Tasks 2.2 / 2.3 / 2.4 / 2.5 - Shaders
+    // Shader::Get(vs_path, fs_path) compiles once and caches the shader.
+    // Paths are relative to the working directory (= the res/ folder).
+    formula_shader   = Shader::Get("shaders/quad.vs",   "shaders/quad.fs");
+    filter_shader    = Shader::Get("shaders/quad.vs",   "shaders/filter.fs");
+    transform_shader = Shader::Get("shaders/quad.vs",   "shaders/transform.fs");
+    raster_shader    = Shader::Get("shaders/raster.vs", "shaders/raster.fs");
 
-    orbit_distance = 6.0f;
-    orbit_yaw = 0.0f;
-    orbit_pitch = 0.0f;
+    // Task 2.3 / 2.4 - Load the image into a GPU Texture.
+    // A CPU Image lives in RAM. A GPU Texture lives in VRAM.
+    // We use Texture::Get() which loads and caches it.
+    filter_texture = Texture::Get("images/fruits.png");
 
-    UpdateCameraFromOrbit();
+    // Task 2.5 - Each entity needs the raster shader and the model texture
+    Texture* model_texture = Texture::Get("textures/lee_color_specular.tga");
+    for (auto e : entities)
+    {
+        e->shader      = raster_shader;
+        e->gpu_texture = model_texture;
+    }
 
-    // Cargar iconos
-    icons_loaded = true;
-    icons_loaded &= iconLine.LoadPNG("images/line.png", true);
-    icons_loaded &= iconRect.LoadPNG("images/rectangle.png", true);
-    icons_loaded &= iconTri.LoadPNG("images/triangle.png", true);
-    icons_loaded &= iconPencil.LoadPNG("images/pencil.png", true);
-    icons_loaded &= iconEraser.LoadPNG("images/eraser.png", true);
-    icons_loaded &= iconBlack.LoadPNG("images/black.png", true);
-    icons_loaded &= iconWhite.LoadPNG("images/white.png", true);
-    icons_loaded &= iconRed.LoadPNG("images/red.png", true);
-    icons_loaded &= iconGreen.LoadPNG("images/green.png", true);
-    icons_loaded &= iconBlue.LoadPNG("images/blue.png", true);
-    icons_loaded &= iconYellow.LoadPNG("images/yellow.png", true);
+    // ================================================================
+    // LAB 5 - Materials and lights
+    // ================================================================
 
-    // Crear botones (posición en toolbar)
-    btnLine = Button(&iconLine, Vector2(8, 8), Button::BTN_LINE);
-    btnRect = Button(&iconRect, Vector2(48, 8), Button::BTN_RECT);
-    btnTri = Button(&iconTri, Vector2(88, 8), Button::BTN_TRIANGLE);
-    btnPencil = Button(&iconPencil, Vector2(128, 8), Button::BTN_PENCIL);
-    btnEraser = Button(&iconEraser, Vector2(168, 8), Button::BTN_ERASER);
+    // Gouraud material: lighting computed in the VERTEX shader
+    gouraud_material = new Material();
+    gouraud_material->shader = Shader::Get("shaders/gouraud.vs", "shaders/gouraud.fs");
 
-    btnBlack = Button(&iconBlack, Vector2(240, 8), Button::BTN_COLOR_BLACK);
-    btnWhite = Button(&iconWhite, Vector2(280, 8), Button::BTN_COLOR_WHITE);
-    btnRed = Button(&iconRed, Vector2(320, 8), Button::BTN_COLOR_RED);
-    btnGreen = Button(&iconGreen, Vector2(360, 8), Button::BTN_COLOR_GREEN);
-    btnBlue = Button(&iconBlue, Vector2(400, 8), Button::BTN_COLOR_BLUE);
-    btnYellow = Button(&iconYellow, Vector2(440, 8), Button::BTN_COLOR_YELLOW);
+    // Phong material: lighting computed in the FRAGMENT shader
+    phong_material = new Material();
+    phong_material->shader        = Shader::Get("shaders/phong.vs", "shaders/phong.fs");
+    phong_material->color_texture = model_texture;
+    phong_material->normal_texture = Texture::Get("textures/lee_normal.tga");
+
+    // Default: textures are OFF (user turns them on with C / S / N keys)
+    phong_material->use_color_texture  = false;
+    phong_material->use_spec_texture   = false;
+    phong_material->use_normal_texture = false;
+
+    // Scene lights: position + color intensity
+    // Light 0: warm white from front-right
+    scene_lights[0] = sLight(Vector3(3.0f, 5.0f, 4.0f),  Vector3(1.0f, 1.0f, 1.0f));
+    // Light 1: cool blue from the left
+    scene_lights[1] = sLight(Vector3(-4.0f, 2.0f, -2.0f), Vector3(0.3f, 0.3f, 1.0f));
+
+    // Ambient: very dim global light so nothing is completely black
+    ambient_light = Vector3(0.1f, 0.1f, 0.1f);
+
+    // Assign materials to entities (they start in Gouraud mode)
+    for (auto e : entities)
+        e->material = gouraud_material;
 }
 
-// Render one frame
+// =============================================================
+//  Render  - called every frame (~60fps)
+//  RULE: never load files here!
+// =============================================================
 void Application::Render(void)
 {
-    // 1) Base: lo persistente
-    framebuffer = canvas;
-	zBuffer.Fill(10000.0f);
+    // Clear OpenGL's color and depth buffers every frame
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    if (camera)
+    // ---- LAB 4 ----
+    if (current_lab == 4)
     {
-        if (scene_mode == MODE_SINGLE)
+        if (current_task == 1)
         {
-            if (!entities.empty() && entities[0])
-                entities[0]->Render(&framebuffer, camera, &zBuffer);
+            // Task 2.2 - Mathematical formula patterns
+            // 1. Enable the shader (tells OpenGL: use these GPU programs)
+            formula_shader->Enable();
+
+            // 2. Upload uniforms:
+            //    SetFloat / SetInt send CPU variables to the GPU shader.
+            //    The string name MUST match the uniform name in the GLSL file.
+            formula_shader->SetFloat("u_time",    time);
+            formula_shader->SetFloat("u_aspect",  (float)window_width / (float)window_height);
+            formula_shader->SetInt("u_subtask",   current_subtask);
+
+            // 3. Draw the quad. The GPU runs quad.vs then quad.fs for each pixel.
+            quad_mesh->Render();
+
+            // 4. Disable when done
+            formula_shader->Disable();
         }
-        else
+        else if (current_task == 2)
         {
-            for (size_t i = 0; i < entities.size(); ++i)
-            {
-                if (entities[i])
-                {
-                    Color c = Color::WHITE;
-                    if (i < entity_colors.size())
-                        c = entity_colors[i];
-                    entities[i]->Render(&framebuffer, camera, &zBuffer);
-                }
-            }
+            // Task 2.3 - Image colour filters
+            filter_shader->Enable();
+            filter_shader->SetInt("u_subtask", current_subtask);
+            // SetTexture binds the GPU texture to a texture slot and
+            // tells the shader which slot to sample from (sampler2D)
+            filter_shader->SetTexture("u_texture", filter_texture);
+            quad_mesh->Render();
+            filter_shader->Disable();
+        }
+        else if (current_task == 3)
+        {
+            // Task 2.4 - Time-based image transformations
+            transform_shader->Enable();
+            transform_shader->SetFloat("u_time",    time);
+            transform_shader->SetInt("u_subtask",   current_subtask);
+            transform_shader->SetTexture("u_texture", filter_texture);
+            quad_mesh->Render();
+            transform_shader->Disable();
+        }
+        else if (current_task == 4)
+        {
+            // Task 2.5 - Rasterize the 3D mesh using the GPU
+            // GL_DEPTH_TEST ensures closer objects occlude farther ones
+            glEnable(GL_DEPTH_TEST);
+
+            for (auto e : entities)
+                if (e) e->Render(camera);   // new GPU render method (see entity.cpp)
+
+            glDisable(GL_DEPTH_TEST);
         }
     }
 
-    // 2) Preview mientras arrastras (no se guarda)
-    if (is_drawing && (mouse_state & SDL_BUTTON_LMASK))
+    // ---- LAB 5 ----
+    else if (current_lab == 5)
     {
-        Vector2 end_pos = mouse_position;
+        // Build the sUniformData that travels from Application -> Entity -> Material -> Shader
+        sUniformData data;
+        data.viewprojection  = camera->GetViewProjectionMatrix();
+        data.camera_position = camera->eye;
+        data.ambient_light   = ambient_light;
+        data.time            = time;
+        data.num_lights      = num_lights;
+        // Copy scene lights into the struct
+        for (int i = 0; i < num_lights; ++i)
+            data.lights[i] = scene_lights[i];
 
-        if (current_tool == TOOL_LINE)
+        // Choose material based on G / P key
+        Material* mat = (shading_mode == PHONG) ? phong_material : gouraud_material;
+
+        // Update phong material texture toggles (C / S / N keys)
+        if (phong_material)
         {
-            framebuffer.DrawLineDDA((int)start_pos.x, (int)start_pos.y,
-                (int)end_pos.x, (int)end_pos.y, current_color);
+            phong_material->use_color_texture  = use_color_tex;
+            phong_material->use_spec_texture   = use_spec_tex;
+            phong_material->use_normal_texture = use_normal_tex;
         }
-        else if (current_tool == TOOL_RECT)
+
+        // Assign active material to all entities
+        for (auto e : entities)
+            if (e) e->material = mat;
+
+        // --- Multipass rendering ---
+        // We render the scene ONCE PER LIGHT.
+        // First pass: normal depth test, no blending, ambient IS added
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDisable(GL_BLEND);
+
+        data.first_pass  = true;
+        data.lights[0]   = scene_lights[0];  // active light for this pass
+        for (auto e : entities)
+            if (e) e->Render(data);
+
+        // Additional passes (one per extra light)
+        // Each pass ADDS its light contribution on top of the previous result.
+        // glBlendFunc(GL_ONE, GL_ONE) = src + dst (pure addition)
+        // GL_LEQUAL allows re-drawing pixels at the same depth as the first pass
+        for (int li = 1; li < num_lights; ++li)
         {
-            int x0 = (int)start_pos.x, y0 = (int)start_pos.y;
-            int x1 = (int)end_pos.x, y1 = (int)end_pos.y;
+            data.first_pass = false;          // don't add ambient again
+            data.lights[0]  = scene_lights[li];
 
-            int rx = std::min(x0, x1);
-            int ry = std::min(y0, y1);
-            int rw = std::abs(x1 - x0) + 1;
-            int rh = std::abs(y1 - y0) + 1;
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE);
 
-            framebuffer.DrawRect(rx, ry, rw, rh, current_color, 2, false, Color::BLACK);
+            for (auto e : entities)
+                if (e) e->Render(data);
         }
-        else if (current_tool == TOOL_TRIANGLE)
-        {
-            int x0 = (int)start_pos.x, y0 = (int)start_pos.y;
-            int x1 = (int)end_pos.x, y1 = (int)end_pos.y;
 
-            int left = std::min(x0, x1);
-            int right = std::max(x0, x1);
-            int top = std::min(y0, y1);
-            int bottom = std::max(y0, y1);
+        // Restore OpenGL state
+        glDisable(GL_BLEND);
+        glDepthFunc(GL_LESS);
+        glDisable(GL_DEPTH_TEST);
 
-            int cx = (left + right) / 2;
-
-            Vector2 p0((float)cx, (float)top);
-            Vector2 p1((float)left, (float)bottom);
-            Vector2 p2((float)right, (float)bottom);
-
-            framebuffer.DrawTriangle(p0, p1, p2, current_color, false, Color::BLACK);
-        }
+        // Lab 5 spec: "don't forget to disable the material after all lights"
+        if (mat) mat->Disable();
     }
-
-
-    // 4) Presentar
-    framebuffer.Render();
 }
 
-// Called after render
+// =============================================================
+//  Update  - called every frame, before Render
+// =============================================================
 void Application::Update(float seconds_elapsed)
 {
     time += seconds_elapsed;
 
-    if (scene_mode == MODE_MULTI)
-    {
-        for (size_t i = 0; i < entities.size(); ++i)
-            if (entities[i])
-                entities[i]->Update(seconds_elapsed);
-    }
+    // Always keep entities animated (their model matrix changes each frame)
+    for (auto e : entities)
+        if (e) e->Update(seconds_elapsed);
 }
 
-//keyboard press event 
+// =============================================================
+//  Keyboard input
+// =============================================================
 void Application::OnKeyPressed(SDL_KeyboardEvent event)
 {
-    switch (event.keysym.sym) {
-    case SDLK_ESCAPE: exit(0); break;
-
-       
-        // T: Toggle Texture
-    case SDLK_t:
-        for (auto e : entities) {
-            if (e) e->use_texture = !e->use_texture;
-        }
-        std::cout << "Texture toggled" << std::endl;
+    switch (event.keysym.sym)
+    {
+    case SDLK_ESCAPE:
+        exit(0);
         break;
 
-        // Z: Toggle Z-Buffer (Occlusions)
-    case SDLK_z:
-        for (auto e : entities) {
-            if (e) e->use_zbuffer = !e->use_zbuffer;
-        }
-        std::cout << "Z-Buffer toggled" << std::endl;
+    // --- L: toggle between Lab 4 and Lab 5 ---
+    case SDLK_l:
+        current_lab = (current_lab == 4) ? 5 : 4;
+        std::cout << "Lab: " << current_lab << std::endl;
         break;
 
-        // C: Toggle Interpolated Colors vs Plain
-    case SDLK_c:
-        for (auto e : entities) {
-            if (e) e->use_interpolation = !e->use_interpolation;
-        }
-        std::cout << "Interpolation toggled" << std::endl;
-        break;
-
-        // W: Toggle Wireframe Mode
-    case SDLK_w:
-        for (auto e : entities) {
-            if (e) {
-                // Toggle between WIREFRAME and TRIANGLES_INTERPOLATED
-                if (e->mode == eRenderMode::WIREFRAME)
-                    e->mode = eRenderMode::TRIANGLES_INTERPOLATED;
-                else
-                    e->mode = eRenderMode::WIREFRAME;
-            }
-        }
-        std::cout << "Wireframe toggled" << std::endl;
-        break;
-
-        // 1: Draw Single Entity
+    // --- Keys 1-4: select task (Lab 4) or number of lights (Lab 5) ---
     case SDLK_1:
-        scene_mode = MODE_SINGLE;
-        std::cout << "Mode: Single Entity" << std::endl;
+        if (current_lab == 4) { current_task = 1; std::cout << "Task 2.2: Formulas\n"; }
+        else                  { num_lights = 1;   std::cout << "1 light\n"; }
         break;
-
-        // 2: Draw Multiple Animated Entities
     case SDLK_2:
-        scene_mode = MODE_MULTI;
-        std::cout << "Mode: Multi Entity" << std::endl;
+        if (current_lab == 4) { current_task = 2; std::cout << "Task 2.3: Filters\n"; }
+        else                  { num_lights = 2;   std::cout << "2 lights\n"; }
+        break;
+    case SDLK_3:
+        if (current_lab == 4) { current_task = 3; std::cout << "Task 2.4: Transforms\n"; }
+        break;
+    case SDLK_4:
+        if (current_lab == 4) { current_task = 4; std::cout << "Task 2.5: 3D GPU mesh\n"; }
         break;
 
-        // N: Select Camera Near Plane
-    case SDLK_n:
-        current_property = PROP_NEAR;
-        std::cout << "Property Selected: Camera Near" << std::endl;
+    // --- Subtask keys a-f (Lab 4 tasks 1/2/3) ---
+    case SDLK_a: current_subtask = 0; std::cout << "Subtask a\n"; break;
+    case SDLK_b: current_subtask = 1; std::cout << "Subtask b\n"; break;
+    case SDLK_d: current_subtask = 3; std::cout << "Subtask d\n"; break;
+    case SDLK_e: current_subtask = 4; std::cout << "Subtask e\n"; break;
+
+    // c: subtask c (Lab 4) OR toggle colour texture (Lab 5 Phong)
+    case SDLK_c:
+        if (current_lab == 5) { use_color_tex = !use_color_tex; std::cout << "Colour tex: " << use_color_tex << "\n"; }
+        else                  { current_subtask = 2; std::cout << "Subtask c\n"; }
         break;
 
-        // F: Select Camera Far Plane
+    // f: subtask f (Lab 4). Camera far key removed (not needed for this lab).
     case SDLK_f:
-        current_property = PROP_FAR;
-        std::cout << "Property Selected: Camera Far" << std::endl;
+        if (current_lab == 4) { current_subtask = 5; std::cout << "Subtask f\n"; }
         break;
 
-        // V: Select Field of View (FOV)
-    case SDLK_v:
-        current_property = PROP_FOV;
-        std::cout << "Property Selected: Camera FOV" << std::endl;
+    // --- Lab 5 shading mode ---
+    case SDLK_g:
+        shading_mode = GOURAUD;
+        std::cout << "Gouraud shading\n";
+        break;
+    case SDLK_p:
+        shading_mode = PHONG;
+        std::cout << "Phong shading\n";
         break;
 
-        // +: Increase Current Property
-    case SDLK_PLUS:
-    case SDLK_KP_PLUS:
-    case SDLK_EQUALS:
-        if (current_property == PROP_NEAR) {
-            cam_near = std::min(cam_near + 0.1f, cam_far - 1.0f);
-            std::cout << "Near Plane: " << cam_near << std::endl;
-        }
-        else if (current_property == PROP_FAR) {
-            cam_far = cam_far + 10.0f;
-            std::cout << "Far Plane: " << cam_far << std::endl;
-        }
-        else if (current_property == PROP_FOV) {
-            cam_fov = std::min(cam_fov + 1.0f, 170.0f);
-            std::cout << "FOV: " << cam_fov << std::endl;
-        }
-        UpdateCameraProjection(); 
+    // s: toggle specular texture (Lab 5)
+    case SDLK_s:
+        if (current_lab == 5) { use_spec_tex = !use_spec_tex; std::cout << "Specular tex: " << use_spec_tex << "\n"; }
         break;
 
-       
-    case SDLK_MINUS:
-    case SDLK_KP_MINUS:
-        if (current_property == PROP_NEAR) {
-            cam_near = std::max(cam_near - 0.1f, 0.01f);
-            std::cout << "Near Plane: " << cam_near << std::endl;
-        }
-        else if (current_property == PROP_FAR) {
-            cam_far = std::max(cam_far - 10.0f, cam_near + 1.0f);
-            std::cout << "Far Plane: " << cam_far << std::endl;
-        }
-        else if (current_property == PROP_FOV) {
-            cam_fov = std::max(cam_fov - 1.0f, 10.0f);
-            std::cout << "FOV: " << cam_fov << std::endl;
-        }
-        UpdateCameraProjection(); 
+    // n: toggle normal texture (Lab 5)
+    case SDLK_n:
+        if (current_lab == 5) { use_normal_tex = !use_normal_tex; std::cout << "Normal tex: " << use_normal_tex << "\n"; }
         break;
     }
 }
 
+// =============================================================
+//  Mouse input  (kept for camera orbit/pan/zoom)
+// =============================================================
 void Application::OnMouseButtonDown(SDL_MouseButtonEvent event)
 {
     int fx = event.x;
-    int fy = (int)framebuffer.height - 1 - event.y;
+    int fy = event.y;
 
     mouse_position = Vector2((float)fx, (float)fy);
-    mouse_delta = Vector2(0.0f, 0.0f);
+    mouse_delta    = Vector2(0.0f, 0.0f);
 
-    // clicks en toolbar (solo izquierda, como antes)
-    if (event.button == SDL_BUTTON_LEFT && fy < TOOLBAR_H)
+    if (event.button == SDL_BUTTON_LEFT)
     {
-        Vector2 mp((float)fx, (float)fy);
-
-        if (btnLine.IsMouseInside(mp)) { current_tool = TOOL_LINE; is_drawing = false; return; }
-        if (btnRect.IsMouseInside(mp)) { current_tool = TOOL_RECT; is_drawing = false; return; }
-        if (btnTri.IsMouseInside(mp)) { current_tool = TOOL_TRIANGLE; is_drawing = false; return; }
-        if (btnPencil.IsMouseInside(mp)) { current_tool = TOOL_PENCIL; is_drawing = false; return; }
-        if (btnEraser.IsMouseInside(mp)) { current_tool = TOOL_ERASER; is_drawing = false; return; }
-
-        if (btnBlack.IsMouseInside(mp)) { current_color = Color::BLACK; is_drawing = false; return; }
-        if (btnWhite.IsMouseInside(mp)) { current_color = Color::WHITE; is_drawing = false; return; }
-        if (btnRed.IsMouseInside(mp)) { current_color = Color::RED; is_drawing = false; return; }
-        if (btnGreen.IsMouseInside(mp)) { current_color = Color::GREEN; is_drawing = false; return; }
-        if (btnBlue.IsMouseInside(mp)) { current_color = Color::BLUE; is_drawing = false; return; }
-        if (btnYellow.IsMouseInside(mp)) { current_color = Color::YELLOW; is_drawing = false; return; }
-
-        is_drawing = false;
-        return;
+        is_orbiting   = true;
+        mouse_state  |= SDL_BUTTON_LMASK;
     }
-
-    // 2.5 - Camera controls in the 3D area
-    if (fy >= TOOLBAR_H)
+    if (event.button == SDL_BUTTON_RIGHT)
     {
-        if (event.button == SDL_BUTTON_LEFT)
-        {
-            is_orbiting = true;
-            mouse_state |= SDL_BUTTON_LMASK;
-            return;
-        }
-        if (event.button == SDL_BUTTON_RIGHT)
-        {
-            is_panning = true;
-            mouse_state |= SDL_BUTTON_RMASK;
-            return;
-        }
+        is_panning    = true;
+        mouse_state  |= SDL_BUTTON_RMASK;
     }
-
-  
 }
 
 void Application::OnMouseButtonUp(SDL_MouseButtonEvent event)
@@ -407,71 +424,56 @@ void Application::OnMouseButtonUp(SDL_MouseButtonEvent event)
     if (event.button == SDL_BUTTON_LEFT)
     {
         mouse_state &= ~SDL_BUTTON_LMASK;
-        is_orbiting = false;
-        is_drawing = false;
+        is_orbiting  = false;
     }
     else if (event.button == SDL_BUTTON_RIGHT)
     {
         mouse_state &= ~SDL_BUTTON_RMASK;
-        is_panning = false;
+        is_panning   = false;
     }
 }
 
 void Application::OnMouseMove(SDL_MouseButtonEvent event)
 {
     int fx = event.x;
-    int fy = (int)framebuffer.height - 1 - event.y;
+    int fy = event.y;
 
     Vector2 newPos((float)fx, (float)fy);
-    mouse_delta = newPos - mouse_position;
+    mouse_delta    = newPos - mouse_position;
     mouse_position = newPos;
 
-    if (fy < TOOLBAR_H)
-        return;
-
-    // 2.5 - Orbit (left button)
+    // Orbit with left button
     if (is_orbiting && (mouse_state & SDL_BUTTON_LMASK))
     {
-        float sens = 0.01f;
-        orbit_yaw -= mouse_delta.x * sens;
-        orbit_pitch += mouse_delta.y * sens;
-
-        float limit = 1.5f;
-        if (orbit_pitch > limit) orbit_pitch = limit;
-        if (orbit_pitch < -limit) orbit_pitch = -limit;
-
+        float sens    = 0.01f;
+        orbit_yaw   -= mouse_delta.x * sens;
+        orbit_pitch  += mouse_delta.y * sens;
+        orbit_pitch   = std::max(-1.5f, std::min(1.5f, orbit_pitch));
         UpdateCameraFromOrbit();
     }
 
-    // 2.5 - Pan target (right button)
+    // Pan target with right button
     if (is_panning && (mouse_state & SDL_BUTTON_RMASK) && camera)
     {
         Vector3 forward = camera->center - camera->eye;
         forward.Normalize();
-
         Vector3 right = forward.Cross(Vector3(0.0f, 1.0f, 0.0f));
         right.Normalize();
-
         Vector3 up = right.Cross(forward);
         up.Normalize();
 
         float sens = 0.002f * orbit_distance;
-
-        camera->center = camera->center - right * (mouse_delta.x * sens) + up * (mouse_delta.y * sens);
-
+        camera->center = camera->center
+                       - right * (mouse_delta.x * sens)
+                       + up    * (mouse_delta.y * sens);
         UpdateCameraFromOrbit();
     }
 }
 
 void Application::OnWheel(SDL_MouseWheelEvent event)
 {
-    // 2.5 - Zoom with wheel
-    float dy = event.preciseY;
-
-    orbit_distance -= dy * 0.5f;
-    if (orbit_distance < 0.5f) orbit_distance = 0.5f;
-    if (orbit_distance > 50.0f) orbit_distance = 50.0f;
-
+    orbit_distance -= event.preciseY * 0.5f;
+    orbit_distance  = std::max(0.5f, std::min(50.0f, orbit_distance));
     UpdateCameraFromOrbit();
 }
 
@@ -481,5 +483,6 @@ void Application::OnMouseButtonDoubleClick(SDL_MouseButtonEvent event)
 
 void Application::OnFileChanged(const char* filename)
 {
+    // Hot-reload shaders when their file changes on disk
     Shader::ReloadSingleShader(filename);
 }
