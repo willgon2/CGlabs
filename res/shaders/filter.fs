@@ -19,19 +19,26 @@ void main()
 	// b) Negative / invert colors
 	vec3 color_b = vec3(1.0) - texColor.rgb;
 
-	// c) Yellow/green tint - remove the blue channel entirely
-	//    Keeping R and G while zeroing B produces warm yellow-green hues.
-	vec3 color_c = vec3(texColor.r, texColor.g, 0.0);
+	// c) Yellow scale - convert to grayscale, then display as shades of yellow.
+	//    R=luma, G=luma, B=0: dark areas become dark yellow, bright areas bright yellow.
+	//    Unlike "remove blue", this loses original colour info → true "yellow scale".
+	float luma_c = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+	vec3 color_c = vec3(luma_c, luma_c, 0.0);
 
 	// d) Black & white threshold - posterize to pure black or pure white
 	//    Compute luminance, then step(0.5, luma) snaps to 0 or 1 with no if.
 	float luma_d  = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
 	vec3 color_d  = vec3(step(0.5, luma_d));
 
-	// e) Saturation boost - mix original with grayscale (factor > 1 = more saturated)
-	float luma_e = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
-	vec3 color_e = mix(vec3(luma_e), texColor.rgb, 2.5);
-	color_e = clamp(color_e, 0.0, 1.0);
+	// e) Cinematic vignette - darkens corners like a camera lens falloff.
+	//    dot(c,c) = squared distance from centre (0 at centre, ~0.5 at corners).
+	//    Multiply by 1.8 then clamp → reaches 0 (black) near the corners.
+	//    Squaring the vignette gives a smooth, natural-looking rolloff curve.
+	vec2 centered_e = v_uv - vec2(0.5);
+	float vignette = 1.0 - dot(centered_e, centered_e) * 1.8;
+	vignette = clamp(vignette, 0.0, 1.0);
+	vignette = vignette * vignette;
+	vec3 color_e = texColor.rgb * vignette;
 
 	// f) Box blur - average a 3x3 neighbourhood of texels
 	//    s = approximate texel size (1/512 for a 512px texture).

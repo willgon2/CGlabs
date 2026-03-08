@@ -47,15 +47,17 @@ void main()
 
 	vec3 color_c = vec3(gy, 0.0, gx); // intersections go magenta (R+B)
 
-	// d) 2D UV colour gradient
-	//    R = uv.x            (0=left, 1=right)
-	//    G = 0.5 + 0.5*uv.y  (0.5=bottom, 1.0=top) — never reaches 0
-	//    B = 0
-	//    Corners: BL=(0,0.5,0)=dark-green, BR=(1,0.5,0)=orange,
-	//             TL=(0,1.0,0)=green,       TR=(1,1.0,0)=yellow.
-	//    The minimum green of 0.5 ensures the bottom of the image stays
-	//    colourful (dark green / orange) instead of going black.
-	vec3 color_d = vec3(uv.x, 0.5 + 0.5 * uv.y, 0.0);
+	// d) 2D UV colour gradient WITH visible square grid overlay
+	//    Base gradient: R=uv.x, G=0.5+0.5*uv.y, B=0
+	//    Grid: 4x4 cells. fract(uv*4) goes 0→1 inside each cell.
+	//    step(0.03, fract) is 0 only in the first 3% of a cell = the line band.
+	//    1 - step(...) flips it: 1 ON the line, 0 everywhere else.
+	//    Multiplying by (1 - on_line) blacks out the grid lines.
+	vec3 base_d = vec3(uv.x, 0.5 + 0.5 * uv.y, 0.0);
+	float line_x = 1.0 - step(0.03, fract(uv.x * 4.0));
+	float line_y = 1.0 - step(0.03, fract(uv.y * 4.0));
+	float on_line = clamp(line_x + line_y, 0.0, 1.0);
+	vec3 color_d = base_d * (1.0 - on_line);
 
 	// e) Black and white checkerboard
 	//    floor(uv*N) gives integer cell index; sum of indices mod 2 alternates 0/1.
@@ -72,10 +74,10 @@ void main()
 	//    (glow^2 ≈ 1 only very close to the curve) for a yellow-green highlight.
 	const float PI = 3.14159265;
 	float wave_y = 0.5 + 0.35 * sin(uv.x * 2.0 * PI);
-	float glow   = exp(-abs(uv.y - wave_y) * 6.0);
-	// 0.1 ambient green: background is dark green (not black) matching reference.
-	// 0.9*glow: wave adds up to 90% green → peak reaches (0.4, 1.0, 0) yellow-green.
-	vec3 color_f = vec3(glow * glow * 0.4, 0.1 + 0.9 * glow, 0.0);
+	// sharpness=12: tight bright core at the curve fades to dark green away from it.
+	// Pure green (no R): bright green at curve, nearly black background.
+	float glow   = exp(-abs(uv.y - wave_y) * 12.0);
+	vec3 color_f = vec3(0.0, 0.05 + 0.95 * glow, 0.0);
 
 	// Select subtask (the only allowed conditional: switching between tasks)
 	if (u_subtask == 0)      color = color_a;
