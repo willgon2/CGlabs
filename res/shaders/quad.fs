@@ -47,17 +47,15 @@ void main()
 
 	vec3 color_c = vec3(gy, 0.0, gx); // intersections go magenta (R+B)
 
-	// d) 2D UV colour gradient WITH visible square grid overlay
-	//    Base gradient: R=uv.x, G=0.5+0.5*uv.y, B=0
-	//    Grid: 4x4 cells. fract(uv*4) goes 0→1 inside each cell.
-	//    step(0.03, fract) is 0 only in the first 3% of a cell = the line band.
-	//    1 - step(...) flips it: 1 ON the line, 0 everywhere else.
-	//    Multiplying by (1 - on_line) blacks out the grid lines.
-	vec3 base_d = vec3(uv.x, 0.5 + 0.5 * uv.y, 0.0);
-	float line_x = 1.0 - step(0.03, fract(uv.x * 4.0));
-	float line_y = 1.0 - step(0.03, fract(uv.y * 4.0));
-	float on_line = clamp(line_x + line_y, 0.0, 1.0);
-	vec3 color_d = base_d * (1.0 - on_line);
+	// d) Pixelated UV gradient — square cells, each a single flat colour.
+	//    floor(coord * N) snaps every pixel to its cell's integer index.
+	//    Dividing back by N gives the cell's representative UV value.
+	//    Aspect-correcting x ensures cells are physically square on screen.
+	//    No lines, no borders — just blocky flat colour regions.
+	float N_d = 4.0;
+	vec2 cell_uv = floor(vec2(uv.x * N_d * u_aspect, uv.y * N_d))
+	             / vec2(N_d * u_aspect, N_d);
+	vec3 color_d = vec3(cell_uv.x, 0.5 + 0.5 * cell_uv.y, 0.0);
 
 	// e) Black and white checkerboard
 	//    floor(uv*N) gives integer cell index; sum of indices mod 2 alternates 0/1.
@@ -74,10 +72,12 @@ void main()
 	//    (glow^2 ≈ 1 only very close to the curve) for a yellow-green highlight.
 	const float PI = 3.14159265;
 	float wave_y = 0.5 + 0.35 * sin(uv.x * 2.0 * PI);
-	// sharpness=12: tight bright core at the curve fades to dark green away from it.
-	// Pure green (no R): bright green at curve, nearly black background.
-	float glow   = exp(-abs(uv.y - wave_y) * 12.0);
-	vec3 color_f = vec3(0.0, 0.05 + 0.95 * glow, 0.0);
+	// Binary split: step(wave_y, uv.y) = 1 when pixel is ABOVE the sine boundary.
+	// No glow, no exp(), no blur — two flat solid regions separated by the curve.
+	float above_wave = step(wave_y, uv.y);
+	vec3 col_dark  = vec3(0.0, 0.15, 0.0); // dark green — background (above wave)
+	vec3 col_light = vec3(0.0, 0.55, 0.0); // light green — filled shape (below wave)
+	vec3 color_f = mix(col_light, col_dark, above_wave);
 
 	// Select subtask (the only allowed conditional: switching between tasks)
 	if (u_subtask == 0)      color = color_a;
