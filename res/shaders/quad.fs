@@ -65,18 +65,16 @@ void main()
 	float check = mod(floor(uv.x * 8.0) + floor(uv.y * 8.0), 2.0);
 	vec3 color_e = vec3(check);
 
-	// f) Filled sine-wave shape with vertical gradient and anti-aliased edge.
-	//    wave_y : sine boundary at this x.
-	//    mask   : 1.0 below the wave (filled), 0.0 above (black).
-	//             smoothstep over a 0.01-wide band replaces a hard step,
-	//             giving a clean sub-pixel anti-aliased edge without any if/else.
-	//    color  : vec3(0, uv.y, 0) — green intensity = pixel's own y-coordinate,
-	//             so the fill is brightest at the wave's peaks and fades to black
-	//             at the bottom of the screen.
+	// f) Symmetric glow centred on the sine wave — fades to black in both directions.
+	//    dist      : absolute vertical distance from pixel to the wave (0 on curve).
+	//    intensity : smoothstep maps dist=0 → 1.0 (bright), dist≥fade_width → 0.0 (black).
+	//    Both above and below the wave share the same gradient; the wave itself
+	//    is always the brightest point regardless of its vertical position.
 	const float PI = 3.14159265;
-	float wave_y = 0.5 + 0.35 * sin(uv.x * 2.0 * PI);
-	float mask   = 1.0 - smoothstep(wave_y - 0.005, wave_y + 0.005, uv.y);
-	vec3 color_f = vec3(0.0, uv.y * mask, 0.0);
+	float wave_y    = 0.5 + 0.35 * sin(uv.x * 2.0 * PI);
+	float dist_f    = abs(uv.y - wave_y);
+	float intensity = smoothstep(0.5, 0.0, dist_f);
+	vec3 color_f    = vec3(0.0, max(0.0, intensity), 0.0);
 
 	// Select subtask (the only allowed conditional: switching between tasks)
 	if (u_subtask == 0)      color = color_a;
