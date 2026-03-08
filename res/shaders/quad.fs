@@ -71,7 +71,7 @@ void main()
 	//    Colour: pure G for the main glow, tiny R boost at the bright peak
 	//    (glow^2 ≈ 1 only very close to the curve) for a yellow-green highlight.
 	const float PI = 3.14159265;
-	float wave_y = 0.5 + 0.35 * sin(uv.x * 4.0 * PI);
+	float wave_y = 0.5 + 0.35 * sin(uv.x * 2.0 * PI);
 	float glow   = exp(-abs(uv.y - wave_y) * 6.0);
 	// 0.1 ambient green: background is dark green (not black) matching reference.
 	// 0.9*glow: wave adds up to 90% green → peak reaches (0.4, 1.0, 0) yellow-green.
