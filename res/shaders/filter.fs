@@ -19,30 +19,35 @@ void main()
 	// b) Negative / invert colors
 	vec3 color_b = vec3(1.0) - texColor.rgb;
 
-	// c) Sepia tone (warm brownish look, no ifs needed - it's a dot product per channel)
-	vec3 color_c = vec3(
-		dot(texColor.rgb, vec3(0.393, 0.769, 0.189)),
-		dot(texColor.rgb, vec3(0.349, 0.686, 0.168)),
-		dot(texColor.rgb, vec3(0.272, 0.534, 0.131))
-	);
+	// c) Yellow/green tint - remove the blue channel entirely
+	//    Keeping R and G while zeroing B produces warm yellow-green hues.
+	vec3 color_c = vec3(texColor.r, texColor.g, 0.0);
 
-	// d) Vignette - darken edges using distance from center
-	vec2 centered = v_uv - vec2(0.5);
-	float vignette = 1.0 - dot(centered, centered) * 2.5;
-	vignette = clamp(vignette, 0.0, 1.0);
-	vec3 color_d = texColor.rgb * vignette;
+	// d) Black & white threshold - posterize to pure black or pure white
+	//    Compute luminance, then step(0.5, luma) snaps to 0 or 1 with no if.
+	float luma_d  = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+	vec3 color_d  = vec3(step(0.5, luma_d));
 
 	// e) Saturation boost - mix original with grayscale (factor > 1 = more saturated)
 	float luma_e = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
 	vec3 color_e = mix(vec3(luma_e), texColor.rgb, 2.5);
 	color_e = clamp(color_e, 0.0, 1.0);
 
-	// f) Chromatic aberration - sample R, G, B channels at slightly offset UVs
-	float amount = 0.012;
-	float r = texture2D(u_texture, v_uv + vec2(amount, 0.0)).r;
-	float g = texture2D(u_texture, v_uv).g;
-	float b = texture2D(u_texture, v_uv - vec2(amount, 0.0)).b;
-	vec3 color_f = vec3(r, g, b);
+	// f) Box blur - average a 3x3 neighbourhood of texels
+	//    s = approximate texel size (1/512 for a 512px texture).
+	//    We unroll the loop manually to stay in simple GLSL.
+	float s = 0.002;
+	vec3 color_f = vec3(0.0);
+	color_f += texture2D(u_texture, v_uv + vec2(-s, -s)).rgb;
+	color_f += texture2D(u_texture, v_uv + vec2(0.0, -s)).rgb;
+	color_f += texture2D(u_texture, v_uv + vec2( s, -s)).rgb;
+	color_f += texture2D(u_texture, v_uv + vec2(-s, 0.0)).rgb;
+	color_f += texture2D(u_texture, v_uv + vec2(0.0, 0.0)).rgb;
+	color_f += texture2D(u_texture, v_uv + vec2( s, 0.0)).rgb;
+	color_f += texture2D(u_texture, v_uv + vec2(-s,  s)).rgb;
+	color_f += texture2D(u_texture, v_uv + vec2(0.0,  s)).rgb;
+	color_f += texture2D(u_texture, v_uv + vec2( s,  s)).rgb;
+	color_f /= 9.0;
 
 	// Select subtask (the only allowed conditional: switching between tasks)
 	if (u_subtask == 0)      color = color_a;

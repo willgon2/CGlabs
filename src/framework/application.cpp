@@ -226,6 +226,7 @@ void Application::Render(void)
             // Task 2.4 - Time-based image transformations
             transform_shader->Enable();
             transform_shader->SetFloat("u_time",    time);
+            transform_shader->SetFloat("u_aspect",  (float)window_width / (float)window_height);
             transform_shader->SetInt("u_subtask",   current_subtask);
             transform_shader->SetTexture("u_texture", filter_texture);
             quad_mesh->Render();

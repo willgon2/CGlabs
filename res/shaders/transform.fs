@@ -6,6 +6,7 @@ varying vec2 v_uv;
 
 uniform sampler2D u_texture;
 uniform float u_time;
+uniform float u_aspect; // window_width / window_height - needed for undistorted rotation
 uniform int u_subtask;
 
 void main()
@@ -15,13 +16,24 @@ void main()
 	// Transformation a) Rotation around the center of the image
 	{
 		vec2 centered = v_uv - vec2(0.5);
+
+		// Aspect-ratio correction: scale x into screen-space before rotating.
+		// Without this, the rotation matrix distorts the image because UV space
+		// is square (0..1 x 0..1) while the actual screen is wider than tall.
+		// Strategy: stretch x → rotate → un-stretch x.
+		centered.x *= u_aspect;
+
 		float c = cos(u_time * 0.5);
 		float s = sin(u_time * 0.5);
 		// Rotate the UV coordinates
 		vec2 rotated = vec2(
 			c * centered.x - s * centered.y,
 			s * centered.x + c * centered.y
-		) + vec2(0.5);
+		);
+
+		// Un-stretch x back to UV space
+		rotated.x /= u_aspect;
+		rotated += vec2(0.5);
 
 		// Sample. Pixels outside [0,1] show black (clamped).
 		vec2 clamped = clamp(rotated, 0.0, 1.0);
