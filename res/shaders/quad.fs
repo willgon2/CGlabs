@@ -22,42 +22,58 @@ void main()
 	//    As uv.x goes 0→1, red rises and blue falls.
 	vec3 color_a = vec3(uv.x, 0.0, 1.0 - uv.x);
 
-	// b) Radial grayscale: dark at center, bright at edges
-	//    length(uv - 0.5) = distance from screen center in UV space.
-	//    Multiply by 2 so the corners reach ~1.4 (full bright).
-	float dist_b = length(uv - vec2(0.5)) * 2.0;
+	// b) Radial grayscale: dark at center, bright at edges (TRUE CIRCLE)
+	//    Problem: UV space is square (0..1 x 0..1) but the screen is wider
+	//    than tall. A unit step in x covers more pixels than a unit step in y.
+	//    Fix: scale x by u_aspect before length() so the distance metric
+	//    matches actual screen pixels → equal distances in all directions.
+	vec2 centered_b = vec2((uv.x - 0.5) * u_aspect, uv.y - 0.5);
+	float dist_b = length(centered_b) * 2.0;
 	vec3 color_b = vec3(dist_b);
 
-	// c) Colored grid: blue vertical lines + red horizontal lines on black
-	//    mod(x*N, 1.0) gives a sawtooth 0..1 repeating N times.
-	//    step(threshold, mod(...)) is 0 inside the line band, 1 outside.
-	//    1 - step(...) flips it: 1 on the line, 0 everywhere else.
-	//    R = horizontal lines (red), G = 0, B = vertical lines (blue).
-	float gx = 1.0 - step(0.08, mod(uv_aspect.x * 8.0, 1.0)); // vertical lines
-	float gy = 1.0 - step(0.08, mod(uv.y * 8.0, 1.0));         // horizontal lines
-	vec3 color_c = vec3(gy, 0.0, gx);
+	// c) Soft glowing grid: blue vertical + red horizontal lines on black
+	//    step() gives a hard binary edge → not blurred.
+	//    Instead: compute the distance from each pixel to the nearest grid line,
+	//    then apply exp(-dist * sharpness) → Gaussian glow that fades out smoothly.
+	//    min(cell, 1-cell) = distance to the nearest edge of the repeating cell.
+	//    R = horizontal glow (red), G = 0, B = vertical glow (blue).
+	float cellX = mod(uv_aspect.x * 8.0, 1.0);
+	float distX = min(cellX, 1.0 - cellX);   // 0 exactly on vertical line
+	float gx = exp(-distX * 25.0);
 
-	// d) 2D bilinear colour gradient (4-corner blend)
-	//    Corners: bottom-left=red, bottom-right=orange, top-left=green, top-right=yellow
-	//    mix(mix(BL, BR, x), mix(TL, TR, x), y) bilinearly blends all four.
-	vec3 bl = vec3(1.0, 0.0, 0.0); // red   (uv = 0,0)
-	vec3 br = vec3(1.0, 0.5, 0.0); // orange (uv = 1,0)
-	vec3 tl = vec3(0.0, 1.0, 0.0); // green  (uv = 0,1)
-	vec3 tr = vec3(1.0, 1.0, 0.0); // yellow (uv = 1,1)
-	vec3 color_d = mix(mix(bl, br, uv.x), mix(tl, tr, uv.x), uv.y);
+	float cellY = mod(uv.y * 8.0, 1.0);
+	float distY = min(cellY, 1.0 - cellY);   // 0 exactly on horizontal line
+	float gy = exp(-distY * 25.0);
+
+	vec3 color_c = vec3(gy, 0.0, gx); // intersections go magenta (R+B)
+
+	// d) 2D UV colour gradient — the simplest possible 2D gradient
+	//    R = uv.x  (0=left → 1=right)
+	//    G = uv.y  (0=bottom → 1=top)
+	//    B = 0     (no blue)
+	//    Corners: bottom-left=black(0,0,0), bottom-right=red(1,0,0),
+	//             top-left=green(0,1,0), top-right=yellow(1,1,0).
+	//    The 4-corner mix approach introduced irregular blending;
+	//    directly mapping R=x, G=y gives perfectly uniform square-ish regions.
+	vec3 color_d = vec3(uv.x, uv.y, 0.0);
 
 	// e) Black and white checkerboard
 	//    floor(uv*N) gives integer cell index; sum of indices mod 2 alternates 0/1.
 	float check = mod(floor(uv.x * 8.0) + floor(uv.y * 8.0), 2.0);
 	vec3 color_e = vec3(check);
 
-	// f) Glowing green sine wave on black background
-	//    wave_y = vertical position of the sine curve at this x.
-	//    exp(-|dist| * sharpness) creates a soft glow around the curve.
+	// f) Glowing green sine wave with visible colour gradient
+	//    wave_y = y-position of the curve at this x.
+	//    exp(-dist * 6.0): low sharpness → WIDE glow → the black→green
+	//    gradient is visible across a large portion of the screen.
+	//    sharpness=15 was too high: glow vanished 15% from the curve.
+	//    sharpness=6: still 37% green at 20% from the curve → clear gradient.
+	//    Colour: pure G for the main glow, tiny R boost at the bright peak
+	//    (glow^2 ≈ 1 only very close to the curve) for a yellow-green highlight.
 	const float PI = 3.14159265;
 	float wave_y = 0.5 + 0.35 * sin(uv.x * 4.0 * PI);
-	float glow   = exp(-abs(uv.y - wave_y) * 15.0);
-	vec3 color_f = vec3(0.0, glow, 0.0);
+	float glow   = exp(-abs(uv.y - wave_y) * 6.0);
+	vec3 color_f = vec3(glow * glow * 0.4, glow, 0.0);
 
 	// Select subtask (the only allowed conditional: switching between tasks)
 	if (u_subtask == 0)      color = color_a;
