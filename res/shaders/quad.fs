@@ -65,22 +65,17 @@ void main()
 	float check = mod(floor(uv.x * 8.0) + floor(uv.y * 8.0), 2.0);
 	vec3 color_e = vec3(check);
 
-	// f) Glowing green sine wave with visible colour gradient
-	//    wave_y = y-position of the curve at this x.
-	//    exp(-dist * 6.0): low sharpness → WIDE glow → the black→green
-	//    gradient is visible across a large portion of the screen.
-	//    sharpness=15 was too high: glow vanished 15% from the curve.
-	//    sharpness=6: still 37% green at 20% from the curve → clear gradient.
-	//    Colour: pure G for the main glow, tiny R boost at the bright peak
-	//    (glow^2 ≈ 1 only very close to the curve) for a yellow-green highlight.
+	// f) Glowing green sine wave — brightness fades with distance from curve.
+	//    wave_y: y-coordinate of the sine at this pixel's x.
+	//    dist_f: vertical distance from pixel to the curve (0 on the curve).
+	//    glow = exp(-dist_f * 6.0): peaks at 1.0 on the curve, drops to ~0.05
+	//    at ~0.5 UV units away → wide, smooth black→green gradient across the screen.
+	//    Background is pure black; no flat regions, no binary split.
 	const float PI = 3.14159265;
 	float wave_y = 0.5 + 0.35 * sin(uv.x * 2.0 * PI);
-	// Binary split: step(wave_y, uv.y) = 1 when pixel is ABOVE the sine boundary.
-	// No glow, no exp(), no blur — two flat solid regions separated by the curve.
-	float above_wave = step(wave_y, uv.y);
-	vec3 col_dark  = vec3(0.0, 0.15, 0.0); // dark green — background (above wave)
-	vec3 col_light = vec3(0.0, 0.55, 0.0); // light green — filled shape (below wave)
-	vec3 color_f = mix(col_light, col_dark, above_wave);
+	float dist_f  = abs(uv.y - wave_y);
+	float glow    = exp(-dist_f * 6.0);
+	vec3 color_f  = vec3(0.0, glow, 0.0);
 
 	// Select subtask (the only allowed conditional: switching between tasks)
 	if (u_subtask == 0)      color = color_a;
