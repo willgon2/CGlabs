@@ -22,9 +22,7 @@ Entity::~Entity()
 {
 }
 
-// -------------------------------------------------------
-// Old Lab 3 software renderer (wireframe triangles on CPU)
-// -------------------------------------------------------
+// Lab 3 - software wireframe renderer
 static bool IsInsideClipCube(const Vector3& p)
 {
     return (p.x >= -1.0f && p.x <= 1.0f &&
@@ -70,59 +68,33 @@ void Entity::Render(Image* framebuffer, Camera* camera, const Color& c)
     }
 }
 
-// -------------------------------------------------------
-// Lab 4 Task 2.5 - GPU render using a raw Shader
-// -------------------------------------------------------
+// Lab 4 - GPU render
 void Entity::Render(Camera* camera)
 {
     if (!shader || !mesh || !camera) return;
 
-    // 1. Activate the shader program on the GPU
     shader->Enable();
-
-    // 2. Upload uniforms: the shader needs the model matrix and the VP matrix
-    //    so it can transform each vertex into clip space.
-    //    u_model:            local -> world  (this entity's transform)
-    //    u_viewprojection:   world -> clip   (camera's view * projection)
     shader->SetMatrix44("u_model",          model);
     shader->SetMatrix44("u_viewprojection", camera->GetViewProjectionMatrix());
 
-    // 3. Bind the texture (if any) to texture slot 0
     if (gpu_texture)
         shader->SetTexture("u_texture", gpu_texture);
 
-    // 4. Draw all triangles of the mesh
     mesh->Render();
-
-    // 5. Done - deactivate
     shader->Disable();
 }
 
-// -------------------------------------------------------
-// Lab 5 - GPU render using a Material
-// -------------------------------------------------------
+// Lab 5 - material render
 void Entity::Render(sUniformData& data)
 {
     if (!material || !mesh) return;
 
-    // The entity is the only one who knows its own model matrix,
-    // so we fill that in before passing data to the Material
     data.model = model;
-
-    // Material::Enable uploads ALL uniforms to the shader
-    // (model matrix, VP matrix, lights, ambient, material properties, textures)
     material->Enable(data, data.first_pass);
-
-    // Draw the mesh
     mesh->Render();
-
-    // Disable shader (and unbind textures)
     material->Disable();
 }
 
-// -------------------------------------------------------
-// Update - animates the entity each frame
-// -------------------------------------------------------
 void Entity::Update(float seconds_elapsed)
 {
     phase += seconds_elapsed;
@@ -138,6 +110,6 @@ void Entity::Update(float seconds_elapsed)
     R.MakeRotationMatrix(angle, Vector3(0.0f, 1.0f, 0.0f));
     S.MakeScaleMatrix(s, s, s);
 
-    // TRS: first scale, then rotate, then translate
+    // TRS order: scale, rotate, translate
     model = T * R * S;
 }
